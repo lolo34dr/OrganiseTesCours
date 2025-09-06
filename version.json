@@ -1,3 +1,5 @@
 {
-  "version": "1.0"
+  "version": "1.2",
+  "changelog": "test UPDATE",
+  "download_url": "https://raw.githubusercontent.com/lolo34dr/OrganiseTesCours/refs/heads/main/main.py"
 }
