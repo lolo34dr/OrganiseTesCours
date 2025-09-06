@@ -44,7 +44,7 @@ import zipfile
 import time
 
 # Version locale de l'application
-CURRENT_VERSION = '1.1'
+CURRENT_VERSION = '2.0'
 # URL fournie (vérifiée à chaque lancement)
 UPDATE_URL = 'https://raw.githubusercontent.com/lolo34dr/OrganiseTesCours/refs/heads/main/version.json'
 AUTO_APPLY_UPDATE = False
@@ -403,68 +403,6 @@ def _fetch_update_info(url, timeout=6):
     except Exception:
         # network / timeout / parsing -> on ignore silencieusement (retour None)
         return None
-
-
-def _notify_update_on_ui(root, remote_info):
-    """
-    remote_info attendu : dict contenant au moins 'version'.
-    Cette fonction est thread-safe : elle poste la notification via root.after.
-    """
-    # Normaliser remote_info
-    if remote_info is None:
-        return
-    if isinstance(remote_info, (int, float, str)):
-        remote_info = {'version': str(remote_info)}
-    if not isinstance(remote_info, dict):
-        return
-
-    # S'assurer que la clé 'version' existe
-    if 'version' not in remote_info:
-        # peut-être que le JSON utilise une clé différente -> essayer quelques alternatives
-        for k in ('ver', 'v', 'release'):
-            if k in remote_info:
-                remote_info['version'] = remote_info[k]
-                break
-    if 'version' not in remote_info:
-        return
-
-    remote_ver = str(remote_info.get('version'))
-    # si version vide, rien à faire
-    if not remote_ver:
-        return
-
-    cmp = _compare_versions(CURRENT_VERSION, remote_ver)
-    if cmp >= 0:
-        return
-
-    changelog = remote_info.get('changelog') or remote_info.get('notes') or ''
-    download = remote_info.get('download_url') or remote_info.get('url') or remote_info.get('html_url')
-
-    msg = f"Une nouvelle version est disponible : {remote_ver}\nVotre version : {CURRENT_VERSION}\n\n"
-    if changelog:
-        msg += f"Changelog :\n{changelog}\n\n"
-    msg += "Voulez-vous ouvrir la page de mise à jour ?"
-
-    def ask_and_open():
-        try:
-            if messagebox.askyesno('Mise à jour disponible', msg):
-                if download:
-                    try:
-                        webbrowser.open(download)
-                    except Exception:
-                        messagebox.showinfo('Info', f'Ouvrez manuellement : {download}')
-                else:
-                    messagebox.showinfo('Info', 'Aucun lien de téléchargement trouvé dans le fichier version.json')
-        except Exception:
-            # si l'UI est déjà fermée ou autre, ignorer
-            pass
-
-    # poster sur le thread UI
-    try:
-        root.after(100, ask_and_open)
-    except Exception:
-        # si on ne peut pas poster sur l'UI (rare), juste tenter d'appeler directement
-        ask_and_open()
 
 
 def start_update_check(root):
