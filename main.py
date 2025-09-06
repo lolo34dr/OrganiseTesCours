@@ -38,11 +38,16 @@ import threading
 import urllib.request
 import urllib.error
 import webbrowser
+import hashlib
+import shutil
+import zipfile
+import time
 
 # Version locale de l'application
-CURRENT_VERSION = '1.0'
+CURRENT_VERSION = '1.1'
 # URL fournie (vérifiée à chaque lancement)
 UPDATE_URL = 'https://raw.githubusercontent.com/lolo34dr/OrganiseTesCours/refs/heads/main/version.json'
+AUTO_APPLY_UPDATE = False
 
 USE_TKCALENDAR = False
 try:
@@ -126,6 +131,219 @@ def open_file_with_default(path):
         subprocess.run(['xdg-open', path])
 
 # --- update check helpers ---
+
+def _sha256_of_file(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(8192), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _download_to_temp(url, timeout=30):
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'OrganiseTesCours-Updater/1.0'})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            # déterminer extension si possible
+            ct = resp.headers.get('Content-Type', '').lower()
+            data = resp.read()
+            # nom temporaire
+            suffix = ''
+            if url.lower().endswith('.zip'):
+                suffix = '.zip'
+            elif url.lower().endswith('.exe'):
+                suffix = '.exe'
+            elif url.lower().endswith('.py'):
+                suffix = '.py'
+            # write temp
+            tmpf = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+            tmpf.write(data)
+            tmpf.flush()
+            tmpf.close()
+            return tmpf.name
+    except Exception as e:
+        return None
+    
+def _apply_update_file(downloaded_path, expected_sha256=None, restart=True):
+    """
+    downloaded_path: chemin du fichier téléchargé (peut être .py, .zip, .exe).
+    expected_sha256: hex string ou None.
+    restart: si True, redémarre l'application après remplacement.
+    Retourne True si appliqué avec succès.
+    """
+    try:
+        if expected_sha256:
+            got = _sha256_of_file(downloaded_path)
+            if got.lower() != expected_sha256.lower():
+                # checksum mismatch
+                return False, f"SHA256 mismatch (got {got})"
+
+        # déterminer cible : si script non compilé -> remplacer le fichier courant (sys.argv[0])
+        running_exec = os.path.abspath(sys.argv[0])  # script courant (main.py)
+        running_binary = os.path.abspath(sys.executable)  # interpréteur ou exe compilé
+
+        # CASE 1 : ZIP -> extraire les fichiers à la racine du projet (écrase les fichiers existants after backup)
+        if zipfile.is_zipfile(downloaded_path):
+            # sauvegarde : create backup dir with timestamp
+            backup_dir = os.path.join(os.path.dirname(running_exec), f'backup_{int(time.time())}')
+            os.makedirs(backup_dir, exist_ok=True)
+            # copy current files that will be overwritten: we will extract zip and overwrite files; backup all files in zip if exist
+            with zipfile.ZipFile(downloaded_path, 'r') as z:
+                for member in z.namelist():
+                    target = os.path.join(os.path.dirname(running_exec), member)
+                    if os.path.exists(target):
+                        # make sure subdirs exist in backup
+                        destbackup = os.path.join(backup_dir, member)
+                        os.makedirs(os.path.dirname(destbackup), exist_ok=True)
+                        shutil.copy2(target, destbackup)
+                # extract all (overwrite)
+                z.extractall(os.path.dirname(running_exec))
+            # done
+            applied = True
+
+        else:
+            # single file (py or exe)
+            # if the downloaded file is an exe and current process is an exe (pyinstaller), replace executable
+            downloaded_name = os.path.basename(downloaded_path)
+            if downloaded_name.lower().endswith('.exe') and os.path.basename(running_binary).lower().endswith('.exe') and running_binary != sys.executable:
+                # try to replace the running executable
+                target_bin = running_binary
+                backup_bin = target_bin + f'.bak_{int(time.time())}'
+                try:
+                    shutil.copy2(target_bin, backup_bin)
+                except Exception:
+                    pass
+                try:
+                    # On Windows, replacing running exe may fail; try move after process exits.
+                    # We'll write the new exe next to current and schedule replacement on restart.
+                    shutil.copy2(downloaded_path, target_bin)
+                    applied = True
+                except Exception as e:
+                    # fallback: write next to it and notify manual replace
+                    alt = target_bin + '.new'
+                    shutil.copy2(downloaded_path, alt)
+                    return False, f"Impossible d'écraser l'exécutable en cours. Nouveau fichier écrit : {alt}"
+            else:
+                # assume replace script file (main.py)
+                target_script = running_exec
+                backup_script = target_script + f'.bak_{int(time.time())}'
+                try:
+                    shutil.copy2(target_script, backup_script)
+                except Exception:
+                    pass
+                try:
+                    shutil.copy2(downloaded_path, target_script)
+                    applied = True
+                except Exception as e:
+                    return False, f"Erreur écriture fichier : {e}"
+
+        # nettoyage du temp
+        try:
+            os.remove(downloaded_path)
+        except Exception:
+            pass
+
+        if applied and restart:
+            try:
+                # redémarrage : relancer python avec mêmes arguments
+                python = sys.executable
+                os.execv(python, [python] + sys.argv)
+            except Exception:
+                # si execv échoue, on renvoie True quand même (mise à jour appliquée)
+                return True, "Mise à jour appliquée (redémarrage automatique échoué). Relance manuelle requise."
+        return True, "Mise à jour appliquée"
+    except Exception as e:
+        return False, str(e)
+    
+def _notify_update_on_ui(root, remote_info):
+    """
+    Améliorée : propose 'Ouvrir la page', 'Mettre à jour maintenant' ou 'Plus tard'.
+    Si AUTO_APPLY_UPDATE=True -> télécharge et applique automatiquement.
+    """
+    # normalisation
+    if remote_info is None:
+        return
+    if isinstance(remote_info, (int, float, str)):
+        remote_info = {'version': str(remote_info)}
+    if not isinstance(remote_info, dict):
+        return
+    if 'version' not in remote_info:
+        for k in ('ver','v','release'):
+            if k in remote_info:
+                remote_info['version'] = remote_info[k]
+                break
+    if 'version' not in remote_info:
+        return
+
+    remote_ver = str(remote_info.get('version'))
+    if not remote_ver:
+        return
+    try:
+        cmp = _compare_versions(CURRENT_VERSION, remote_ver)
+    except Exception:
+        cmp = -1
+    if cmp >= 0:
+        return
+
+    changelog = remote_info.get('changelog') or remote_info.get('notes') or ''
+    download = remote_info.get('download_url') or remote_info.get('url') or remote_info.get('html_url')
+    expected_sha = remote_info.get('sha256')
+
+    msg = f"Nouvelle version disponible : {remote_ver}\\nVotre version : {CURRENT_VERSION}\\n\\n"
+    if changelog:
+        msg += f"Changelog :\\n{changelog}\\n\\n"
+    msg += "Que voulez-vous faire ?"
+
+    def ask_user():
+        try:
+            # Si AUTO_APPLY_UPDATE activé -> lancer update direct en thread
+            if AUTO_APPLY_UPDATE and download:
+                if messagebox.askyesno('Mise à jour automatique', f"Version {remote_ver} disponible. Appliquer maintenant ? (AUTO_APPLY_UPDATE activé)"):
+                    # lancer update dans un thread
+                    def worker_update():
+                        tmp = _download_to_temp(download)
+                        if not tmp:
+                            root.after(100, lambda: messagebox.showerror('Erreur', 'Téléchargement de la mise à jour échoué')) 
+                            return
+                        ok, info = _apply_update_file(tmp, expected_sha256=expected_sha, restart=True)
+                        if not ok:
+                            root.after(100, lambda: messagebox.showerror('Erreur mise à jour', info))
+                    threading.Thread(target=worker_update, daemon=True).start()
+                return
+
+            # sinon proposer choix
+            choice = messagebox.askquestion('Mise à jour disponible', msg, icon='info')
+            # messagebox.askquestion renvoie 'yes'/'no'. On veut proposer 3 choix ->
+            # on fait une nouvelle fenêtre custom si on veut 3 boutons. Simpler: yes -> Update now, no -> Open page
+            if choice == 'yes':
+                if not download:
+                    messagebox.showinfo('Info', 'Aucun lien de téléchargement fourni. Ouverture de la page si disponible.')
+                    if remote_info.get('html_url'):
+                        webbrowser.open(remote_info.get('html_url'))
+                    return
+                # start background update
+                def worker_update2():
+                    tmp = _download_to_temp(download)
+                    if not tmp:
+                        root.after(100, lambda: messagebox.showerror('Erreur', 'Téléchargement de la mise à jour échoué'))
+                        return
+                    ok, info = _apply_update_file(tmp, expected_sha256=expected_sha, restart=True)
+                    if not ok:
+                        root.after(100, lambda: messagebox.showerror('Erreur mise à jour', info))
+                threading.Thread(target=worker_update2, daemon=True).start()
+            else:
+                # 'no' -> ouvrir page de téléchargement si disponible
+                if download:
+                    try:
+                        webbrowser.open(download)
+                    except Exception:
+                        messagebox.showinfo('Info', f'Ouvrez manuellement : {download}')
+                else:
+                    messagebox.showinfo('Info', 'Aucun lien de téléchargement fourni.')
+        except Exception:
+            pass
+
+    root.after(100, ask_user)
 
 def _compare_versions(a, b):
     """Compare semantic-like versions 'a' and 'b'.
