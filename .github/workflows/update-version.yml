@@ -23,35 +23,26 @@ jobs:
       - name: Extract CURRENT_VERSION from main.py
         id: extract
         run: |
-          # extraire CURRENT_VERSION = 'x.y' ou "x.y"
-          VERSION=$(sed -nE "s/.*CURRENT_VERSION\s*=\s*['\"]([^'\"]+)['\"].*/\1/p" main.py)
-          if [ -z "$VERSION" ]; then
-            echo "::error::Impossible de trouver CURRENT_VERSION dans main.py"
+          # extraire CURRENT_VERSION = 'x.y' ou "x.y" via Python one-liner
+          VERSION=$(python -c "import re, pathlib, sys; s=pathlib.Path('main.py').read_text(encoding='utf-8'); m=re.search(r\"CURRENT_VERSION\\s*=\\s*['\\\"]([^'\\\"]+)['\\\"]\", s); print(m.group(1) if m else '')")
+          if [ -z \"$VERSION\" ]; then
+            echo \"::error::Impossible de trouver CURRENT_VERSION dans main.py\"
             exit 1
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Compute SHA256 of main.py
-        id: filehash
-        run: |
-          # sha256sum est disponible sur ubuntu-latest
-          SHA256=$(sha256sum main.py | awk '{print $1}')
-          echo "sha256=$SHA256" >> $GITHUB_OUTPUT
-
-      - name: Update version.json
+      - name: Update version.json (write version + commit SHA + date)
         id: update
         run: |
           VERSION=${{ steps.extract.outputs.version }}
           COMMIT_SHA=${GITHUB_SHA}
-          FILE_SHA=${{ steps.filehash.outputs.sha256 }}
           DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           echo "Mise à jour version.json → $VERSION (commit $COMMIT_SHA) at $DATE"
-          # Écrire version.json (attention : EOF doit être en colonne 0)
+          # Écrire version.json (le marqueur EOF doit être en colonne 0)
           cat > version.json <<EOF
 {
   "version": "$VERSION",
   "sha": "$COMMIT_SHA",
-  "sha256": "$FILE_SHA",
   "date": "$DATE"
 }
 EOF
