@@ -1,6 +1,5 @@
 name: Update version.json
 
-# Autoriser le workflow à écrire le repo (nécessaire pour git push)
 permissions:
   contents: write
 
@@ -9,14 +8,14 @@ on:
     paths:
       - "main.py"
     branches:
-      - main   # change si ta branche principale a un autre nom
+      - main
 
 jobs:
   update-version:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -24,7 +23,7 @@ jobs:
       - name: Extract CURRENT_VERSION from main.py
         id: extract
         run: |
-          # On utilise sed pour extraire CURRENT_VERSION = 'X.Y' ou "X.Y"
+          # extraire CURRENT_VERSION = 'x.y' ou "x.y"
           VERSION=$(sed -nE "s/.*CURRENT_VERSION\s*=\s*['\"]([^'\"]+)['\"].*/\1/p" main.py)
           if [ -z "$VERSION" ]; then
             echo "::error::Impossible de trouver CURRENT_VERSION dans main.py"
@@ -32,16 +31,27 @@ jobs:
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
+      - name: Compute SHA256 of main.py
+        id: filehash
+        run: |
+          # sha256sum est disponible sur ubuntu-latest
+          SHA256=$(sha256sum main.py | awk '{print $1}')
+          echo "sha256=$SHA256" >> $GITHUB_OUTPUT
+
       - name: Update version.json
+        id: update
         run: |
           VERSION=${{ steps.extract.outputs.version }}
-          SHA=${GITHUB_SHA}
+          COMMIT_SHA=${GITHUB_SHA}
+          FILE_SHA=${{ steps.filehash.outputs.sha256 }}
           DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          echo "Mise à jour version.json → $VERSION (SHA $SHA) à $DATE"
+          echo "Mise à jour version.json → $VERSION (commit $COMMIT_SHA) at $DATE"
+          # Écrire version.json (attention : EOF doit être en colonne 0)
           cat > version.json <<EOF
 {
   "version": "$VERSION",
-  "sha": "$SHA",
+  "sha": "$COMMIT_SHA",
+  "sha256": "$FILE_SHA",
   "date": "$DATE"
 }
 EOF
