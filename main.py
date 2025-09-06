@@ -420,7 +420,7 @@ class CourseManagerApp(tk.Tk):
     def __init__(self, conn):
         super().__init__()
         self.conn = conn
-        self.title('OrganiseTesCours | Version beta test')
+        self.title('OrganiseTesCours | Version beta test 1ere update')
         self.geometry('1100x650')
         self.minsize(800, 480)
         self.columnconfigure(0, weight=1)
