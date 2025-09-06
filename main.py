@@ -44,7 +44,7 @@ import zipfile
 import time
 
 # Version locale de l'application
-CURRENT_VERSION = '2.1'
+CURRENT_VERSION = '2.2'
 # URL fournie (vérifiée à chaque lancement)
 UPDATE_URL = 'https://raw.githubusercontent.com/lolo34dr/OrganiseTesCours/refs/heads/main/version.json'
 AUTO_APPLY_UPDATE = False
@@ -887,4 +887,5 @@ if __name__ == '__main__':
     conn = init_db()
     app = CourseManagerApp(conn)
     app.mainloop()
+
 
