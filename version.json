@@ -1,6 +1,5 @@
 {
-  "version": "2.1",
+  "version": "6.0",
   "changelog": "- Fix bug d'affichage\n- Thème bleu ajouté",
-  "download_url": "https://raw.githubusercontent.com/lolo34dr/OrganiseTesCours/main/main.py",
-  "sha256": "B0D9C8545301A19A6EB4F0A02A0B0CCE6DA36FB57DE7E607C571DC3D62B96BF1"
+  "download_url": "https://raw.githubusercontent.com/lolo34dr/OrganiseTesCours/main/main.py"
 }
