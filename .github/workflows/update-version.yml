@@ -1,0 +1,55 @@
+name: Update version.json
+
+on:
+  push:
+    paths:
+      - "main.py"
+    branches:
+      - main
+
+jobs:
+  update-version:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Extract CURRENT_VERSION from main.py
+        id: extract
+        run: |
+          import re, sys, pathlib
+          main = pathlib.Path("main.py").read_text(encoding="utf-8")
+          m = re.search(r"CURRENT_VERSION\s*=\s*['\"]([^'\"]+)['\"]", main)
+          if not m:
+              print("::error::Impossible de trouver CURRENT_VERSION")
+              sys.exit(1)
+          version = m.group(1)
+          print(f"::set-output name=version::{version}")
+
+      - name: Update version.json
+        run: |
+          VERSION=${{ steps.extract.outputs.version }}
+          SHA=${GITHUB_SHA}
+          echo "Mise à jour version.json → $VERSION avec SHA $SHA"
+          cat > version.json <<EOF
+          {
+            "version": "$VERSION",
+            "sha": "$SHA"
+          }
+          EOF
+
+      - name: Commit & Push changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add version.json
+          git commit -m "chore: update version.json to ${{ steps.extract.outputs.version }} (SHA ${GITHUB_SHA})" || echo "No changes to commit"
+          git push
