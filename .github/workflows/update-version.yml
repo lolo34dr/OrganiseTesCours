@@ -1,11 +1,15 @@
 name: Update version.json
 
+# Autoriser le workflow à écrire le repo (nécessaire pour git push)
+permissions:
+  contents: write
+
 on:
   push:
     paths:
       - "main.py"
     branches:
-      - main
+      - main   # change si ta branche principale a un autre nom
 
 jobs:
   update-version:
@@ -17,36 +21,30 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.x"
-
       - name: Extract CURRENT_VERSION from main.py
         id: extract
         run: |
-          VERSION=$(python - <<'EOF'
-import re, pathlib, sys
-main = pathlib.Path("main.py").read_text(encoding="utf-8")
-m = re.search(r"CURRENT_VERSION\s*=\s*['\"]([^'\"]+)['\"]", main)
-if not m:
-    sys.exit(1)
-print(m.group(1))
-EOF
-          )
+          # On utilise sed pour extraire CURRENT_VERSION = 'X.Y' ou "X.Y"
+          VERSION=$(sed -nE "s/.*CURRENT_VERSION\s*=\s*['\"]([^'\"]+)['\"].*/\1/p" main.py)
+          if [ -z "$VERSION" ]; then
+            echo "::error::Impossible de trouver CURRENT_VERSION dans main.py"
+            exit 1
+          fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Update version.json
         run: |
           VERSION=${{ steps.extract.outputs.version }}
           SHA=${GITHUB_SHA}
-          echo "Mise à jour version.json → $VERSION avec SHA $SHA"
+          DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "Mise à jour version.json → $VERSION (SHA $SHA) à $DATE"
           cat > version.json <<EOF
-          {
-            "version": "$VERSION",
-            "sha": "$SHA"
-          }
-          EOF
+{
+  "version": "$VERSION",
+  "sha": "$SHA",
+  "date": "$DATE"
+}
+EOF
 
       - name: Commit & Push changes
         run: |
